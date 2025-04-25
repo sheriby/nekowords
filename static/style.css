@@ -13,17 +13,55 @@ body {
     font-family: 'Arial', sans-serif;
     margin: 0;
     padding: 20px;
-    background-color: var(--secondary-color);
+    /* background-color: var(--secondary-color); */
     color: var(--text-color);
+    position: relative;
+    height: 100%;
+    min-height: 100vh;
+    overflow: hidden;
 }
+
+body::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-image: url('bg.webp');
+    background-size: cover;
+    background-position: center;
+    background-repeat: no-repeat;
+    filter: blur(10px);
+    /* 调整模糊程度 */
+    z-index: -1;
+    /* 确保背景在内容下方 */
+}
+
+h1 {
+    color: var(--primary-color);
+}
+
+div.question {
+    color: #e774ff;
+}
+
+.right-item {
+    color: var(--correct-color);
+}
+
+.error-item {
+    color: var(--incorrect-color);
+}
+
 
 .container {
     max-width: 800px;
-    margin: 40px auto;
+    margin: 80px auto;
     background-color: white;
-    padding: 20px;
+    padding: 20px 40px;
     border-radius: 20px;
-    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+    box-shadow: 0 2px 20px rgba(0, 0, 0, 0.2);
 }
 
 .header {
@@ -76,13 +114,13 @@ body {
 }
 
 .question-type {
-    font-size: 1.2em;
+    font-size: 1.5em;
     margin-bottom: 10px;
     color: var(--primary-color);
 }
 
 .question {
-    font-size: 1.5em;
+    font-size: 1.8em;
     margin-bottom: 20px;
     padding: 20px;
     background-color: var(--secondary-color);
@@ -90,12 +128,20 @@ body {
 }
 
 input[type="text"] {
-    width: 100%;
+    width: 60%;
     padding: 10px;
-    font-size: 1.2em;
+    font-size: 1.5em;
     border: 1px solid var(--border-color);
-    border-radius: 4px;
+    border-radius: 10px;
     box-sizing: border-box;
+}
+
+input[type="text"]:focus {
+    outline: none;
+    border: 2px solid var(--primary-color);
+    /* 自定义绿色边框 */
+    box-shadow: 0 0 10px rgba(74, 144, 226, 0.5);
+    /* 可选：添加发光效果 */
 }
 
 .history {
@@ -103,6 +149,7 @@ input[type="text"] {
 }
 
 .history-item {
+    font-size: 1.1em;
     padding: 15px;
     margin-bottom: 10px;
     border-radius: 4px;
@@ -133,7 +180,7 @@ input[type="text"] {
 }
 
 .wrong-answers-title {
-    font-size: 1.2em;
+    font-size: 1.5em;
     font-weight: bold;
     margin-bottom: 15px;
     color: var(--incorrect-color);

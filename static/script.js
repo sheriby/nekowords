@@ -8,9 +8,9 @@ let wrongAnswers = []; // 存储答错的题目
 function getQuestionTypeText(type) {
     switch (type) {
         case 'japanese_to_chinese':
-            return '请写出以下日语单词的中文意思：';
+            return 'JP  ➡️  CN';
         case 'chinese_to_japanese':
-            return '请写出以下中文对应的日语单词：';
+            return 'CN  ➡️  JP';
         default:
             return '';
     }
