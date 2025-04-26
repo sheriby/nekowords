@@ -7,12 +7,16 @@ app = Flask(__name__)
 
 def load_words_from_file(file_path):
     words = []
+    head = True 
     try:
         with open(file_path, 'r', encoding='utf-8') as f:
             for line in f:
+                if head:
+                    head = False
+                    continue
                 parts = line.strip().split(',')
                 if len(parts) == 3:
-                    japanese, kana, chinese = parts
+                    japanese, chinese, kana = parts
                     words.append({
                         'japanese': japanese,
                         'kana': kana,
@@ -68,7 +72,7 @@ def get_all_questions():
         # 生成日语到中文的题目
         japanese_question = word['japanese']
         if not word['is_kana']:  # 如果不是全假名单词，添加假名
-            japanese_question = f"{word['japanese']}（{word['kana']}）"
+            japanese_question = f"{word['japanese']}({word['kana']})"
             
         questions.append({
             'type': 'japanese_to_chinese',
@@ -94,21 +98,29 @@ def export_wrong_answers():
         return jsonify({'error': '没有错题可导出'})
     
     # 创建临时文件
-    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.txt', mode='w', encoding='utf-8')
+    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.csv', mode='w', encoding='utf-8')
     
     # 用于去重的集合
     exported_words = set()
+    temp_file.write('日文,中文,假名\n')
     
     # 写入错题
     for item in wrong_answers:
         # 如果是日语到中文的错题
         if item['type'] == 'japanese_to_chinese':
             # 提取日语单词（去掉括号中的假名）
-            japanese = item['question'].split('（')[0]
+            ans = item['question'].split('(')
+            japanese = ans[0]
+            kana = None
+            if len(ans) > 1:
+                kana = ans[1].split(')')[0]
             # 检查是否已经导出过
             word_key = f"{japanese},{item['correctAnswer']}"
             if word_key not in exported_words:
-                temp_file.write(f"{japanese},{item['correctAnswer']}\n")
+                if kana is None:
+                    temp_file.write(f"{japanese},{item['correctAnswer']}\n")
+                else:
+                    temp_file.write(f"{japanese},{item['correctAnswer']},{kana}\n")
                 exported_words.add(word_key)
         # 如果是中文到日语的错题
         elif item['type'] == 'chinese_to_japanese':
@@ -117,7 +129,7 @@ def export_wrong_answers():
             if word_key not in exported_words:
                 # 如果单词不是全假名，添加假名信息
                 if not item['is_kana'] and item['kana']:
-                    temp_file.write(f"{item['correctAnswer']},{item['kana']},{item['question']}\n")
+                    temp_file.write(f"{item['correctAnswer']},{item['question']},{item['kana']}\n")
                 else:
                     temp_file.write(f"{item['correctAnswer']},{item['question']}\n")
                 exported_words.add(word_key)
@@ -127,9 +139,9 @@ def export_wrong_answers():
     return send_file(
         temp_file.name,
         as_attachment=True,
-        download_name='wrong_answers.txt',
+        download_name='wrong_answers.csv',
         mimetype='text/plain'
     )
 
 if __name__ == '__main__':
-    app.run(debug=True) 
+    app.run(debug=False) 

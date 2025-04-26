@@ -135,7 +135,7 @@ function checkAnswer() {
     if (!currentQuestion) return;
 
     const userAnswer = document.getElementById('answer').value.trim();
-    const isCorrect = userAnswer === currentQuestion.answer;
+    const isCorrect = userAnswer === 'skip' || userAnswer === currentQuestion.answer;
 
     if (isCorrect) {
         correctCount++;
@@ -172,7 +172,7 @@ async function exportWrongAnswers() {
             const url = window.URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = 'wrong_answers.txt';
+            a.download = 'wrong_answers.csv';
             document.body.appendChild(a);
             a.click();
             window.URL.revokeObjectURL(url);
