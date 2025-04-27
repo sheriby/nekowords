@@ -4,6 +4,17 @@ let wrongCount = 0;
 let answeredQuestions = new Set(); // 用于记录已正确回答的题目
 let allQuestions = []; // 存储所有题目
 let wrongAnswers = []; // 存储答错的题目
+let currentMode = 'input'; // 默认为输入模式
+let flashcardState = 'front'; // 记忆卡状态：front或back
+let srsData = new Map(); // 存储SRS数据
+
+// SRS间隔设置（单位：分钟）
+const SRS_INTERVALS = {
+    again: 1,     // 重来：1分钟后
+    hard: 6,      // 困难：6分钟后
+    good: 10,     // 良好：10分钟后
+    easy: 5760    // 简单：4天后
+};
 
 function getQuestionTypeText(type) {
     switch (type) {
@@ -92,6 +103,7 @@ async function loadQuestionsFromFiles(files) {
     for (const file of files) {
         formData.append('files[]', file);
     }
+    formData.append('mode', currentMode);
 
     try {
         const response = await fetch('/get_all_questions', {
@@ -105,15 +117,129 @@ async function loadQuestionsFromFiles(files) {
         }
         allQuestions = data;
 
-        // 隐藏文件上传区域，显示答题区域
+        // 初始化SRS数据
+        allQuestions.forEach(q => {
+            if (currentMode === 'flashcard') {
+                srsData.set(q.question, {
+                    nextReview: Date.now(),
+                    interval: 0,
+                    ease: 1.0
+                });
+            }
+        });
+
+        // 隐藏文件上传区域和模式选择，显示答题区域
         document.querySelector('.file-upload').style.display = 'none';
+        document.getElementById('modeSelection').style.display = 'none';
         document.querySelector('.question-container').style.display = 'block';
 
-        nextQuestion();
+        if (currentMode === 'flashcard') {
+            setupFlashcardMode();
+        } else {
+            nextQuestion();
+        }
     } catch (error) {
         console.error('加载题目失败:', error);
         alert('加载题目失败，请重试');
     }
+}
+
+function setupFlashcardMode() {
+    document.querySelector('.question-container').style.display = 'none';
+    document.querySelector('.flashcard-container').style.display = 'block';
+    document.querySelector('.stats').style.display = 'none';
+
+    // 添加事件监听器
+    document.querySelectorAll('.difficulty-btn').forEach(btn => {
+        btn.addEventListener('click', handleDifficultyRating);
+    });
+
+    nextFlashcard();
+}
+
+function nextFlashcard() {
+    const now = Date.now();
+    const availableQuestions = allQuestions.filter(q => {
+        const srsInfo = srsData.get(q.question);
+        return srsInfo.nextReview <= now;
+    });
+
+    if (availableQuestions.length === 0) {
+        alert('所有单词都已复习完成！');
+        return;
+    }
+
+    // 随机选择题目
+    const randomIndex = Math.floor(Math.random() * availableQuestions.length);
+    currentQuestion = availableQuestions[randomIndex];
+    flashcardState = 'front';
+
+    const flashcard = document.getElementById('flashcard');
+    flashcard.textContent = currentQuestion.question;
+
+    const answerContainer = document.getElementById('flashcard-answer');
+    const answerDiv = answerContainer.querySelector('.history-answer');
+
+    // 根据题目类型设置答案
+    let answerContent = '';
+    switch (currentQuestion.type) {
+        case 'japanese_to_others':
+            if (!currentQuestion.is_kana) {
+                answerContent += `${currentQuestion.kana}<br>`;
+            }
+            answerContent += `${currentQuestion.chinese}`;
+            break;
+        case 'kana_to_others':
+            answerContent = `${currentQuestion.japanese}<br>${currentQuestion.chinese}`;
+            break;
+        case 'chinese_to_others':
+            answerContent = `${currentQuestion.japanese}`;
+            if (!currentQuestion.is_kana) {
+                answerContent += `<br>${currentQuestion.kana}`;
+            }
+            break;
+    }
+
+    answerDiv.innerHTML = answerContent;
+    answerContainer.style.visibility = 'hidden';
+    document.getElementById('difficultyButtons').style.visibility = 'hidden';
+}
+
+function flipFlashcard() {
+    if (flashcardState === 'front') {
+        const answerContainer = document.getElementById('flashcard-answer');
+        answerContainer.style.visibility = 'visible';
+        document.getElementById('difficultyButtons').style.visibility = 'visible';
+        flashcardState = 'back';
+    }
+}
+
+function handleDifficultyRating(e) {
+    const difficulty = e.target.textContent;
+    const srsInfo = srsData.get(currentQuestion.question);
+    const now = Date.now();
+
+    // 更新SRS数据
+    switch (difficulty) {
+        case '重来':
+            srsInfo.interval = SRS_INTERVALS.again;
+            srsInfo.ease = Math.max(1.0, srsInfo.ease - 0.3);
+            break;
+        case '困难':
+            srsInfo.interval = SRS_INTERVALS.hard;
+            srsInfo.ease = Math.max(1.0, srsInfo.ease - 0.2);
+            break;
+        case '良好':
+            srsInfo.interval = SRS_INTERVALS.good;
+            break;
+        case '简单':
+            srsInfo.interval = SRS_INTERVALS.easy;
+            srsInfo.ease = Math.min(2.5, srsInfo.ease + 0.2);
+            break;
+    }
+
+    srsInfo.nextReview = now + (srsInfo.interval * 60 * 1000);
+    nextFlashcard();
 }
 
 function nextQuestion() {
@@ -194,8 +320,66 @@ async function exportWrongAnswers() {
     }
 }
 
+// 监听模式切换
+document.querySelectorAll('input[name="mode"]').forEach(radio => {
+    radio.addEventListener('change', (e) => {
+        currentMode = e.target.value;
+        if (allQuestions.length > 0) {
+            if (currentMode === 'flashcard') {
+                setupFlashcardMode();
+            } else {
+                setupInputMode();
+            }
+        }
+    });
+});
+
+// 全局监听回车键
+document.addEventListener('keypress', function (e) {
+    if (e.key === 'Enter' && currentMode === 'flashcard' && flashcardState === 'front') {
+        flipFlashcard();
+    }
+});
+
+// 监听键盘事件
+document.addEventListener('keypress', function (e) {
+    if (currentMode === 'flashcard' && flashcardState === 'back') {
+        switch (e.key.toLowerCase()) {
+            case 'a':
+                document.querySelector('.difficulty-btn.again').click();
+                break;
+            case 'b':
+                document.querySelector('.difficulty-btn.hard').click();
+                break;
+            case 'c':
+                document.querySelector('.difficulty-btn.good').click();
+                break;
+            case 'd':
+                document.querySelector('.difficulty-btn.easy').click();
+                break;
+        }
+    }
+});
+
+function setupInputMode() {
+    const questionContainer = document.querySelector('.question-container');
+    questionContainer.innerHTML = `
+        <div id="question-type" class="question-type"></div>
+        <div id="question" class="question"></div>
+        <div class="input-container">
+            <input type="text" id="answer" autocomplete="off">
+        </div>
+    `;
+    document.getElementById('answer').addEventListener('keypress', function (e) {
+        if (e.key === 'Enter') {
+            checkAnswer();
+        }
+    });
+    nextQuestion();
+}
+
 // 监听回车键
-document.getElementById('answer').addEventListener('keypress', function (e) {
+document.getElementById('answer')?.addEventListener('keypress', function (e) {
     if (e.key === 'Enter') {
         checkAnswer();
     }

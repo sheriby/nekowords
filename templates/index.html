@@ -18,6 +18,12 @@
                 <input type="file" id="wordFiles" accept=".csv" multiple>
                 <button id="loadFiles">加载单词文件</button>
             </div>
+            <div id="modeSelection" class="mode-selection">
+                <input type="radio" id="inputMode" name="mode" value="input" checked>
+                <label for="inputMode">输入模式</label>
+                <input type="radio" id="flashcardMode" name="mode" value="flashcard">
+                <label for="flashcardMode">记忆卡模式</label>
+            </div>
         </div>
 
         <div class="stats">
@@ -39,12 +45,23 @@
             <div id="question-type" class="question-type"></div>
             <div id="question" class="question"></div>
             <div class="input-container">
-                <!-- <input type="text" id="answer" placeholder="输入答案后按回车" autocomplete="off"> -->
                 <input type="text" id="answer" autocomplete="off">
             </div>
+            <div id="history" class="history"></div>
         </div>
 
-        <div id="history" class="history"></div>
+        <div class="flashcard-container" style="display: none;">
+            <div id="flashcard" class="question"></div>
+            <div id="flashcard-answer" class="history-item correct">
+                <div class="history-answer">预设答案</div>
+            </div>
+            <div id="difficultyButtons" class="difficulty-buttons">
+                <button class="difficulty-btn again">重来</button>
+                <button class="difficulty-btn hard">困难</button>
+                <button class="difficulty-btn good">良好</button>
+                <button class="difficulty-btn easy">简单</button>
+            </div>
+        </div>
 
         <div class="export-container" style="display: none;">
             <button id="exportWrongAnswers">导出错题</button>

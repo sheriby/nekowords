@@ -2,6 +2,7 @@ from flask import Flask, render_template, jsonify, request, send_file
 import random
 import os
 import tempfile
+import pandas as pd
 
 app = Flask(__name__)
 
@@ -66,29 +67,43 @@ def get_all_questions():
     
     if not all_words:
         return jsonify({'error': '没有找到单词'})
-    
+
     questions = []
     for word in all_words:
-        # 生成日语到中文的题目
-        japanese_question = word['japanese']
-        if not word['is_kana']:  # 如果不是全假名单词，添加假名
-            japanese_question = f"{word['japanese']}({word['kana']})"
-            
+        # 1. 日文 -> 假名和中文
         questions.append({
-            'type': 'japanese_to_chinese',
-            'question': japanese_question,
-            'answer': word['chinese']
-        })
-        
-        # 生成中文到日语的题目
-        questions.append({
-            'type': 'chinese_to_japanese',
-            'question': word['chinese'],
+            'question': word['japanese'],
             'answer': word['japanese'],
+            'type': 'japanese_to_others',
+            'japanese': word['japanese'],
             'kana': word['kana'],
-            'is_kana': word['is_kana']  # 传递是否为全假名单词的信息
+            'chinese': word['chinese'],
+            'is_kana': word['is_kana']
         })
-    
+
+        # 2. 假名 -> 日文和中文（如果不是全假名单词）
+        if not word['is_kana']:
+            questions.append({
+                'question': word['kana'],
+                'answer': word['kana'],
+                'type': 'kana_to_others',
+                'japanese': word['japanese'],
+                'kana': word['kana'],
+                'chinese': word['chinese'],
+                'is_kana': word['is_kana']
+            })
+
+        # 3. 中文 -> 日文和假名
+        questions.append({
+            'question': word['chinese'],
+            'answer': word['chinese'],
+            'type': 'chinese_to_others',
+            'japanese': word['japanese'],
+            'kana': word['kana'],
+            'chinese': word['chinese'],
+            'is_kana': word['is_kana']
+        })
+
     return jsonify(questions)
 
 @app.route('/export_wrong_answers', methods=['POST'])
@@ -109,29 +124,24 @@ def export_wrong_answers():
         # 如果是日语到中文的错题
         if item['type'] == 'japanese_to_chinese':
             # 提取日语单词（去掉括号中的假名）
-            ans = item['question'].split('(')
-            japanese = ans[0]
-            kana = None
-            if len(ans) > 1:
-                kana = ans[1].split(')')[0]
+            japanese = item['question'].split('(')[0]
             # 检查是否已经导出过
             word_key = f"{japanese},{item['correctAnswer']}"
             if word_key not in exported_words:
-                if kana is None:
+                if item['is_kana']:
                     temp_file.write(f"{japanese},{item['correctAnswer']}\n")
                 else:
-                    temp_file.write(f"{japanese},{item['correctAnswer']},{kana}\n")
+                    temp_file.write(f"{japanese},{item['correctAnswer']},{item['kana']}\n")
                 exported_words.add(word_key)
         # 如果是中文到日语的错题
         elif item['type'] == 'chinese_to_japanese':
             # 检查是否已经导出过
             word_key = f"{item['correctAnswer']},{item['question']}"
             if word_key not in exported_words:
-                # 如果单词不是全假名，添加假名信息
-                if not item['is_kana'] and item['kana']:
-                    temp_file.write(f"{item['correctAnswer']},{item['question']},{item['kana']}\n")
-                else:
+                if item['is_kana']:
                     temp_file.write(f"{item['correctAnswer']},{item['question']}\n")
+                else:
+                    temp_file.write(f"{item['correctAnswer']},{item['question']},{item['kana']}\n")
                 exported_words.add(word_key)
     
     temp_file.close()
@@ -144,4 +154,4 @@ def export_wrong_answers():
     )
 
 if __name__ == '__main__':
-    app.run(debug=False) 
+    app.run(debug=True) 
