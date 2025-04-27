@@ -7,6 +7,7 @@ let wrongAnswers = []; // 存储答错的题目
 let currentMode = 'input'; // 默认为输入模式
 let flashcardState = 'front'; // 记忆卡状态：front或back
 let srsData = new Map(); // 存储SRS数据
+let currentDeckId = null;
 
 // SRS间隔设置（单位：分钟）
 const SRS_INTERVALS = {
@@ -120,11 +121,7 @@ async function loadQuestionsFromFiles(files) {
         // 初始化SRS数据
         allQuestions.forEach(q => {
             if (currentMode === 'flashcard') {
-                srsData.set(q.question, {
-                    nextReview: Date.now(),
-                    interval: 0,
-                    ease: 1.0
-                });
+                srsData.set(q.question, q.srs_info);
             }
         });
 
@@ -166,6 +163,7 @@ function nextFlashcard() {
 
     if (availableQuestions.length === 0) {
         alert('所有单词都已复习完成！');
+        backToHome();
         return;
     }
 
@@ -239,6 +237,21 @@ function handleDifficultyRating(e) {
     }
 
     srsInfo.nextReview = now + (srsInfo.interval * 60 * 1000);
+    srsInfo.lastReview = now;
+
+    // 保存SRS数据到后端
+    fetch('/update_srs', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+            word_id: currentQuestion.id,
+            question: currentQuestion.question,
+            srs_info: srsInfo
+        })
+    });
+
     nextFlashcard();
 }
 
@@ -385,20 +398,271 @@ document.getElementById('answer')?.addEventListener('keypress', function (e) {
     }
 });
 
-// 监听文件选择
-document.getElementById('loadFiles').addEventListener('click', function () {
-    const files = document.getElementById('wordFiles').files;
-    if (files.length === 0) {
-        alert('请选择至少一个单词文件');
-        return;
-    }
-    loadQuestionsFromFiles(files);
-});
-
-// 监听导出按钮
-document.getElementById('exportWrongAnswers').addEventListener('click', exportWrongAnswers);
 
 // 页面加载时隐藏答题区域
 document.addEventListener('DOMContentLoaded', () => {
     document.querySelector('.question-container').style.display = 'none';
-}); 
+});
+
+// 加载词单列表
+async function loadDecks() {
+    try {
+        const response = await fetch('/get_decks');
+        const decks = await response.json();
+        const decksContainer = document.getElementById('decks');
+        decksContainer.innerHTML = '';
+
+        if (decks.length === 0) {
+            decksContainer.innerHTML = '<div class="empty-deck">暂无词单，请导入</div>';
+            return;
+        }
+
+        decks.forEach(deck => {
+            const deckElement = document.createElement('div');
+            deckElement.className = 'deck-item';
+            deckElement.innerHTML = `
+                <div class="deck-info">
+                    <span class="deck-name">${deck.name}</span>
+                    <span class="deck-progress">${deck.to_review}/${deck.total}</span>
+                </div>
+                <div class="deck-actions">
+                    <button onclick="startDeck(${deck.id})">开始记忆</button>
+                    <button onclick="deleteDeck(${deck.id})" class="delete-btn">删除</button>
+                </div>
+            `;
+            decksContainer.appendChild(deckElement);
+        });
+    } catch (error) {
+        console.error('加载词单失败:', error);
+        alert('加载词单失败，请重试');
+    }
+}
+
+// 开始记忆词单
+async function startDeck(deckId) {
+    currentDeckId = deckId;
+    try {
+        const response = await fetch('/get_deck_words', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ deck_id: deckId })
+        });
+        const data = await response.json();
+
+        if (data.error) {
+            alert(data.error);
+            return;
+        }
+
+        allQuestions = data;
+        srsData.clear();
+
+        // 初始化SRS数据
+        allQuestions.forEach(q => {
+            srsData.set(q.question, q.srs_info);
+        });
+
+        // 隐藏词单管理区域，显示记忆卡区域
+        document.querySelector('.deck-list').style.display = 'none';
+        document.querySelector('.header').style.display = 'none';
+        document.querySelector('.flashcard-container').style.display = 'block';
+
+        nextFlashcard();
+    } catch (error) {
+        console.error('加载词单单词失败:', error);
+        alert('加载词单单词失败，请重试');
+    }
+}
+
+// 返回主页
+function backToHome() {
+    // 隐藏所有学习相关的容器
+    document.querySelector('.question-container').style.display = 'none';
+    document.querySelector('.flashcard-container').style.display = 'none';
+    document.querySelector('.export-container').style.display = 'none';
+
+    // 显示词单管理区域
+    document.querySelector('.deck-list').style.display = 'block';
+    document.querySelector('.header').style.display = 'flex';
+
+    // 重置状态
+    currentQuestion = null;
+    correctCount = 0;
+    wrongCount = 0;
+    answeredQuestions.clear();
+    allQuestions = [];
+    wrongAnswers = [];
+    currentMode = 'input';
+    flashcardState = 'front';
+    srsData.clear();
+    currentDeckId = null;
+
+    // 重新加载词单列表
+    loadDecks();
+}
+
+// 页面加载时加载词单列表
+document.addEventListener('DOMContentLoaded', () => {
+    loadDecks();
+
+    // 导入词单
+    const fileInput = document.getElementById('deckFile');
+    if (fileInput) {
+        fileInput.addEventListener('change', async function () {
+            const file = this.files[0];
+            if (!file) return;
+
+            const formData = new FormData();
+            formData.append('file', file);
+
+            try {
+                const response = await fetch('/import_deck', {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await response.json();
+
+                if (data.error) {
+                    alert(data.error);
+                    return;
+                }
+
+                alert(`词单导入成功，共导入 ${data.word_count} 个单词`);
+                this.value = ''; // 清空文件选择
+                loadDecks(); // 重新加载词单列表
+            } catch (error) {
+                console.error('导入词单失败:', error);
+                alert('导入词单失败，请重试');
+            }
+        });
+    }
+});
+
+// 删除词单
+async function deleteDeck(deckId) {
+    if (!confirm('确定要删除这个词单吗？')) {
+        return;
+    }
+
+    try {
+        const response = await fetch('/delete_deck', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ deck_id: deckId })
+        });
+        const data = await response.json();
+
+        if (data.error) {
+            alert(data.error);
+            return;
+        }
+
+        alert('词单删除成功');
+        loadDecks(); // 重新加载词单列表
+    } catch (error) {
+        console.error('删除词单失败:', error);
+        alert('删除词单失败，请重试');
+    }
+}
+
+// 监听记忆卡点击
+document.getElementById('flashcard').addEventListener('click', flipFlashcard);
+
+// 监听难度按钮点击
+document.querySelectorAll('.difficulty-btn').forEach(btn => {
+    btn.addEventListener('click', handleDifficultyRating);
+});
+
+// 监听键盘事件
+document.addEventListener('keypress', function (e) {
+    if (flashcardState === 'front') {
+        if (e.key === 'Enter') {
+            flipFlashcard();
+        }
+    } else {
+        switch (e.key.toLowerCase()) {
+            case 'a':
+                document.querySelector('.difficulty-btn.again').click();
+                break;
+            case 'b':
+                document.querySelector('.difficulty-btn.hard').click();
+                break;
+            case 'c':
+                document.querySelector('.difficulty-btn.good').click();
+                break;
+            case 'd':
+                document.querySelector('.difficulty-btn.easy').click();
+                break;
+        }
+    }
+});
+
+// 页面加载时加载词单列表
+document.addEventListener('DOMContentLoaded', () => {
+    loadDecks();
+
+    // 导入词单
+    const fileInput = document.getElementById('deckFile');
+    if (fileInput) {
+        fileInput.addEventListener('change', async function () {
+            const file = this.files[0];
+            if (!file) return;
+
+            const formData = new FormData();
+            formData.append('file', file);
+
+            try {
+                const response = await fetch('/import_deck', {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await response.json();
+
+                if (data.error) {
+                    alert(data.error);
+                    return;
+                }
+
+                alert(`词单导入成功，共导入 ${data.word_count} 个单词`);
+                this.value = ''; // 清空文件选择
+                loadDecks(); // 重新加载词单列表
+            } catch (error) {
+                console.error('导入词单失败:', error);
+                alert('导入词单失败，请重试');
+            }
+        });
+    }
+});
+
+// 删除词单
+async function deleteDeck(deckId) {
+    if (!confirm('确定要删除这个词单吗？')) {
+        return;
+    }
+
+    try {
+        const response = await fetch('/delete_deck', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ deck_id: deckId })
+        });
+        const data = await response.json();
+
+        if (data.error) {
+            alert(data.error);
+            return;
+        }
+
+        alert('词单删除成功');
+        loadDecks(); // 重新加载词单列表
+    } catch (error) {
+        console.error('删除词单失败:', error);
+        alert('删除词单失败，请重试');
+    }
+} 
