@@ -58,7 +58,7 @@ Neko🐱Words is a web-based Japanese vocabulary learning application that imple
 ### Setup Steps
 1. **Clone the Repository**
    ```bash
-   git clone https://github.com/yourusername/nekowords.git
+   git clone https://github.com/sheriby/nekowords.git
    cd nekowords
    ```
 

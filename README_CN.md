@@ -57,7 +57,7 @@ Neko🐱Words 是一个基于网页的日语词汇学习应用，通过间隔重
 ### 安装步骤
 1. **克隆仓库**
    ```bash
-   git clone https://github.com/yourusername/nekowords.git
+   git clone https://github.com/sheriby/nekowords.git
    cd nekowords
    ```
 
