@@ -23,22 +23,27 @@ def init_db():
         )
     ''')
     
-    # 单词表
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS words (
+    conn.commit()
+    conn.close()
+
+def create_deck_tables(deck_id):
+    conn = sqlite3.connect('srs_data.db')
+    c = conn.cursor()
+    
+    # 为特定词单创建单词表
+    c.execute(f'''
+        CREATE TABLE IF NOT EXISTS words_{deck_id} (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            deck_id INTEGER,
             japanese TEXT,
             kana TEXT,
             chinese TEXT,
-            is_kana BOOLEAN,
-            FOREIGN KEY (deck_id) REFERENCES decks (id)
+            is_kana BOOLEAN
         )
     ''')
     
-    # SRS记录表
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS srs_records (
+    # 为特定词单创建SRS记录表
+    c.execute(f'''
+        CREATE TABLE IF NOT EXISTS srs_records_{deck_id} (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             word_id INTEGER,
             question TEXT,
@@ -46,7 +51,7 @@ def init_db():
             interval INTEGER,
             ease REAL,
             last_review INTEGER,
-            FOREIGN KEY (word_id) REFERENCES words (id)
+            FOREIGN KEY (word_id) REFERENCES words_{deck_id} (id)
         )
     ''')
     
@@ -58,46 +63,34 @@ def get_decks():
     conn = sqlite3.connect('srs_data.db')
     c = conn.cursor()
     
-    # 获取词单基本信息
-    c.execute('SELECT id, name FROM decks')
+    # 获取词单基本信息，按照创建时间升序排序（ASC）
+    c.execute('SELECT id, name, created_at FROM decks ORDER BY created_at ASC')
     decks = c.fetchall()
     
     # 计算每个词单的单词总数和需要复习的单词数
     deck_stats = []
     for deck in decks:
-        deck_id, name = deck
+        deck_id, name, _ = deck
         
         # 获取词单中的单词总数
-        c.execute('SELECT COUNT(*) FROM words WHERE deck_id = ?', (deck_id,))
+        c.execute(f'SELECT COUNT(*) FROM words_{deck_id}')
         total = c.fetchone()[0]
         
         # 获取需要复习的单词数
         current_time = int(datetime.now().timestamp() * 1000)  # 转换为毫秒
-        c.execute('''
-            WITH word_questions AS (
-                SELECT 
-                    w.id as word_id,
-                    COUNT(DISTINCT sr.id) as total_questions,
-                    SUM(CASE 
-                        WHEN sr.next_review > ? THEN 1 
-                        ELSE 0 
-                    END) as memorized_questions
-                FROM words w
-                LEFT JOIN srs_records sr ON w.id = sr.word_id
-                WHERE w.deck_id = ?
-                GROUP BY w.id
-            )
-            SELECT COUNT(*) 
-            FROM word_questions 
-            WHERE total_questions > 0 AND memorized_questions < total_questions
-        ''', (current_time, deck_id))
+        c.execute(f'''
+            SELECT COUNT(DISTINCT w.id)
+            FROM words_{deck_id} w
+            JOIN srs_records_{deck_id} sr ON w.id = sr.word_id
+            WHERE sr.next_review <= ?
+        ''', (current_time,))
         to_review = c.fetchone()[0]
         
         deck_stats.append({
             'id': deck_id,
             'name': name,
             'total': total,
-            'to_review': to_review
+            'memory_cnt': total - to_review
         })
     
     conn.close()
@@ -112,6 +105,9 @@ def add_deck(name):
                  (name, int(datetime.now().timestamp())))
         deck_id = c.lastrowid
         conn.commit()
+        
+        # 为新词单创建独立的表
+        create_deck_tables(deck_id)
         return deck_id
     except sqlite3.IntegrityError:
         return None
@@ -124,24 +120,30 @@ def add_words_to_deck(deck_id, words):
     c = conn.cursor()
     try:
         for word in words:
-            c.execute('''
-                INSERT INTO words (deck_id, japanese, kana, chinese, is_kana)
-                VALUES (?, ?, ?, ?, ?)
-            ''', (deck_id, word['japanese'], word['kana'], word['chinese'], word['is_kana']))
+            c.execute(f'''
+                INSERT INTO words_{deck_id} (japanese, kana, chinese, is_kana)
+                VALUES (?, ?, ?, ?)
+            ''', (word['japanese'], word['kana'], word['chinese'], word['is_kana']))
             word_id = c.lastrowid
             
-            # 为每个单词创建三种SRS记录
-            questions = [
-                (word_id, word['japanese']),  # 日文题目
-                (word_id, word['kana']),      # 假名题目
-                (word_id, word['chinese'])    # 中文题目
-            ]
-            if word['is_kana']:
-                questions.pop(1)  # 如果是全假名单词，移除假名题目
+            # 为每个单词创建SRS记录
+            questions = []
             
+            # 如果中文和日文相同，只存储一次
+            if word['japanese'] == word['chinese']:
+                questions.append((word_id, word['japanese']))  # 只存储一次日文/中文
+            else:
+                questions.append((word_id, word['japanese']))  # 日文题目
+                questions.append((word_id, word['chinese']))   # 中文题目
+            
+            # 如果不是全假名单词，添加假名题目
+            if not word['is_kana']:
+                questions.append((word_id, word['kana']))      # 假名题目
+            
+            # 在SRS表中存储不重复的问题
             for _, question in questions:
-                c.execute('''
-                    INSERT INTO srs_records (word_id, question, next_review, interval, ease, last_review)
+                c.execute(f'''
+                    INSERT INTO srs_records_{deck_id} (word_id, question, next_review, interval, ease, last_review)
                     VALUES (?, ?, ?, ?, ?, ?)
                 ''', (word_id, question, 0, 0, 1.0, 0))
         
@@ -159,27 +161,24 @@ def get_deck_words(deck_id):
     c = conn.cursor()
     
     # 获取单词
-    c.execute('''
+    c.execute(f'''
         SELECT id, japanese, kana, chinese, is_kana
-        FROM words
-        WHERE deck_id = ?
-    ''', (deck_id,))
+        FROM words_{deck_id}
+    ''')
     words = c.fetchall()
     
     # 获取SRS数据
-    c.execute('''
-        SELECT word_id, question, next_review, interval, ease, last_review
-        FROM srs_records
-        WHERE word_id IN (SELECT id FROM words WHERE deck_id = ?)
-    ''', (deck_id,))
+    c.execute(f'''
+        SELECT id, question, next_review, interval, ease, last_review
+        FROM srs_records_{deck_id}
+    ''')
     srs_records = c.fetchall()
-    
-    conn.close()
     
     # 组织数据
     srs_data = {}
     for record in srs_records:
         srs_data[record[1]] = {
+            'srs_record_id': record[0],
             'nextReview': record[2],
             'interval': record[3],
             'ease': record[4],
@@ -190,7 +189,7 @@ def get_deck_words(deck_id):
     for word in words:
         word_id, japanese, kana, chinese, is_kana = word
         
-        # 日文题目
+        # 添加日文题目
         questions.append({
             'question': japanese,
             'answer': japanese,
@@ -200,6 +199,7 @@ def get_deck_words(deck_id):
             'chinese': chinese,
             'is_kana': is_kana,
             'srs_info': srs_data.get(japanese, {
+                'srs_record_id': None,
                 'nextReview': 0,
                 'interval': 0,
                 'ease': 1.0,
@@ -207,7 +207,7 @@ def get_deck_words(deck_id):
             })
         })
         
-        # 假名题目（如果不是全假名单词）
+        # 如果不是全假名单词，添加假名题目
         if not is_kana:
             questions.append({
                 'question': kana,
@@ -218,6 +218,7 @@ def get_deck_words(deck_id):
                 'chinese': chinese,
                 'is_kana': is_kana,
                 'srs_info': srs_data.get(kana, {
+                    'srs_record_id': None,
                     'nextReview': 0,
                     'interval': 0,
                     'ease': 1.0,
@@ -225,40 +226,41 @@ def get_deck_words(deck_id):
                 })
             })
         
-        # 中文题目
-        questions.append({
-            'question': chinese,
-            'answer': chinese,
-            'type': 'chinese_to_others',
-            'japanese': japanese,
-            'kana': kana,
-            'chinese': chinese,
-            'is_kana': is_kana,
-            'srs_info': srs_data.get(chinese, {
-                'nextReview': 0,
-                'interval': 0,
-                'ease': 1.0,
-                'lastReview': 0
+        # 如果中文和日文不同，添加中文题目
+        if japanese != chinese:
+            questions.append({
+                'question': chinese,
+                'answer': chinese,
+                'type': 'chinese_to_others',
+                'japanese': japanese,
+                'kana': kana,
+                'chinese': chinese,
+                'is_kana': is_kana,
+                'srs_info': srs_data.get(chinese, {
+                    'srs_record_id': None,
+                    'nextReview': 0,
+                    'interval': 0,
+                    'ease': 1.0,
+                    'lastReview': 0
+                })
             })
-        })
     
     return questions
 
 # 更新SRS数据
-def update_srs_data(word_id, question, srs_info):
+def update_srs_data(srs_record_id, srs_info, deck_id):
     conn = sqlite3.connect('srs_data.db')
     c = conn.cursor()
-    c.execute('''
-        UPDATE srs_records
+    c.execute(f'''
+        UPDATE srs_records_{deck_id}
         SET next_review = ?, interval = ?, ease = ?, last_review = ?
-        WHERE word_id = ? AND question = ?
+        WHERE id = ?
     ''', (
         srs_info['nextReview'],
         srs_info['interval'],
         srs_info['ease'],
         srs_info['lastReview'],
-        word_id,
-        question
+        srs_record_id
     ))
     conn.commit()
     conn.close()
@@ -268,11 +270,10 @@ def delete_deck(deck_id):
     conn = sqlite3.connect('srs_data.db')
     c = conn.cursor()
     try:
-        # 先删除相关的SRS记录
-        c.execute('DELETE FROM srs_records WHERE word_id IN (SELECT id FROM words WHERE deck_id = ?)', (deck_id,))
-        # 删除单词
-        c.execute('DELETE FROM words WHERE deck_id = ?', (deck_id,))
-        # 删除词单
+        # 删除词单特定的表
+        c.execute(f'DROP TABLE IF EXISTS srs_records_{deck_id}')
+        c.execute(f'DROP TABLE IF EXISTS words_{deck_id}')
+        # 删除词单记录
         c.execute('DELETE FROM decks WHERE id = ?', (deck_id,))
         conn.commit()
         return True
@@ -289,6 +290,9 @@ def load_words_from_file(file_path):
     words = []
     try:
         with open(file_path, 'r', encoding='utf-8') as f:
+            # 跳过第一行（表头）
+            next(f)
+            
             for line in f:
                 line = line.strip()
                 if not line:  # 跳过空行
@@ -327,43 +331,51 @@ def get_decks_route():
     decks = get_decks()
     return jsonify(decks)
 
-@app.route('/import_deck', methods=['POST'])
-def import_deck():
-    if 'file' not in request.files:
+@app.route('/import_decks', methods=['POST'])
+def import_decks():
+    if 'files' not in request.files:
         return jsonify({'error': '没有选择文件'})
     
-    file = request.files['file']
-    if file.filename == '':
+    files = request.files.getlist('files')
+    if not files or all(file.filename == '' for file in files):
         return jsonify({'error': '没有选择文件'})
     
-    # 获取词单名称（使用文件名）
-    deck_name = os.path.splitext(file.filename)[0]
+    success_count = 0
+    total_words = 0
     
-    # 保存上传的文件到临时目录
-    temp_dir = tempfile.mkdtemp()
-    file_path = os.path.join(temp_dir, file.filename)
-    file.save(file_path)
+    for file in files:
+        # 获取词单名称（使用文件名，去掉扩展名）
+        deck_name = os.path.splitext(file.filename)[0]
+        
+        # 保存上传的文件到临时目录
+        temp_dir = tempfile.mkdtemp()
+        file_path = os.path.join(temp_dir, file.filename)
+        file.save(file_path)
+        
+        try:
+            # 读取单词
+            words = load_words_from_file(file_path)
+            
+            if words:
+                # 添加词单
+                deck_id = add_deck(deck_name)
+                if deck_id:
+                    # 添加单词到词单
+                    if add_words_to_deck(deck_id, words):
+                        success_count += 1
+                        total_words += len(words)
+        finally:
+            # 清理临时文件
+            os.remove(file_path)
+            os.rmdir(temp_dir)
     
-    # 读取单词
-    words = load_words_from_file(file_path)
+    if success_count == 0:
+        return jsonify({'error': '所有词单导入失败'})
     
-    # 删除临时文件
-    os.remove(file_path)
-    os.rmdir(temp_dir)
-    
-    if not words:
-        return jsonify({'error': '没有找到单词或文件格式不正确'})
-    
-    # 添加词单
-    deck_id = add_deck(deck_name)
-    if not deck_id:
-        return jsonify({'error': '词单已存在'})
-    
-    # 添加单词到词单
-    if not add_words_to_deck(deck_id, words):
-        return jsonify({'error': '添加单词失败'})
-    
-    return jsonify({'success': True, 'word_count': len(words)})
+    return jsonify({
+        'success_count': success_count,
+        'total_words': total_words
+    })
 
 @app.route('/get_deck_words', methods=['POST'])
 def get_deck_words_route():
@@ -377,14 +389,14 @@ def get_deck_words_route():
 @app.route('/update_srs', methods=['POST'])
 def update_srs():
     data = request.json
-    word_id = data.get('word_id')
-    question = data.get('question')
+    srs_record_id = data.get('srs_record_id')
     srs_info = data.get('srs_info')
+    deck_id = data.get('deck_id')
     
-    if not word_id or not question or not srs_info:
+    if not all([srs_record_id, srs_info, deck_id]):
         return jsonify({'error': '缺少必要参数'})
     
-    update_srs_data(word_id, question, srs_info)
+    update_srs_data(srs_record_id, srs_info, deck_id)
     return jsonify({'success': True})
 
 @app.route('/export_wrong_answers', methods=['POST'])

@@ -11,11 +11,54 @@ let currentDeckId = null;
 
 // SRS间隔设置（单位：分钟）
 const SRS_INTERVALS = {
-    again: 1,     // 重来：1分钟后
-    hard: 6,      // 困难：6分钟后
-    good: 10,     // 良好：10分钟后
-    easy: 5760    // 简单：4天后
+    again: 1,          // 重来：1分钟后
+    hard: {
+        initial: 5,    // 初始：5分钟
+        min: 5,        // 最小：5分钟
+        max: 4320      // 最大：3天
+    },
+    good: {
+        initial: 10,   // 初始：10分钟
+        min: 10,       // 最小：10分钟
+        max: 10080     // 最大：7天
+    },
+    easy: {
+        initial: 240,  // 初始：4小时
+        min: 240,      // 最小：4小时
+        max: 43200     // 最大：30天
+    }
 };
+
+function calculateNextInterval(currentInterval, ease, difficulty) {
+    const intervals = SRS_INTERVALS[difficulty];
+
+    // 如果是"重来"，直接返回固定间隔
+    if (difficulty === 'again') {
+        return SRS_INTERVALS.again;
+    }
+
+    // 如果是首次学习或重新学习
+    if (currentInterval === 0) {
+        return intervals.initial;
+    }
+
+    // 计算新间隔
+    let newInterval;
+    switch (difficulty) {
+        case 'hard':
+            newInterval = Math.floor(currentInterval * ease * 0.8);
+            break;
+        case 'good':
+            newInterval = Math.floor(currentInterval * ease);
+            break;
+        case 'easy':
+            newInterval = Math.floor(currentInterval * ease * 1.3);
+            break;
+    }
+
+    // 确保间隔在合理范围内
+    return Math.min(Math.max(newInterval, intervals.min), intervals.max);
+}
 
 function getQuestionTypeText(type) {
     switch (type) {
@@ -221,21 +264,23 @@ function handleDifficultyRating(e) {
     switch (difficulty) {
         case '重来':
             srsInfo.interval = SRS_INTERVALS.again;
-            srsInfo.ease = Math.max(1.0, srsInfo.ease - 0.3);
+            srsInfo.ease = Math.max(1.3, srsInfo.ease - 0.3);
             break;
         case '困难':
-            srsInfo.interval = SRS_INTERVALS.hard;
-            srsInfo.ease = Math.max(1.0, srsInfo.ease - 0.2);
+            srsInfo.interval = calculateNextInterval(srsInfo.interval, srsInfo.ease, 'hard');
+            srsInfo.ease = Math.max(1.3, srsInfo.ease - 0.15);
             break;
         case '良好':
-            srsInfo.interval = SRS_INTERVALS.good;
+            srsInfo.interval = calculateNextInterval(srsInfo.interval, srsInfo.ease, 'good');
+            // 良好不改变ease
             break;
         case '简单':
-            srsInfo.interval = SRS_INTERVALS.easy;
-            srsInfo.ease = Math.min(2.5, srsInfo.ease + 0.2);
+            srsInfo.interval = calculateNextInterval(srsInfo.interval, srsInfo.ease, 'easy');
+            srsInfo.ease = Math.min(2.5, srsInfo.ease + 0.15);
             break;
     }
 
+    // 计算下次复习时间（转换为毫秒）
     srsInfo.nextReview = now + (srsInfo.interval * 60 * 1000);
     srsInfo.lastReview = now;
 
@@ -246,9 +291,9 @@ function handleDifficultyRating(e) {
             'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-            word_id: currentQuestion.id,
-            question: currentQuestion.question,
-            srs_info: srsInfo
+            srs_record_id: srsInfo.srs_record_id,
+            srs_info: srsInfo,
+            deck_id: currentDeckId
         })
     });
 
@@ -423,7 +468,7 @@ async function loadDecks() {
             deckElement.innerHTML = `
                 <div class="deck-info">
                     <span class="deck-name">${deck.name}</span>
-                    <span class="deck-progress">${deck.to_review}/${deck.total}</span>
+                    <span class="deck-progress">${deck.memory_cnt}/${deck.total}</span>
                 </div>
                 <div class="deck-actions">
                     <button onclick="startDeck(${deck.id})">开始记忆</button>
@@ -467,6 +512,7 @@ async function startDeck(deckId) {
         // 隐藏词单管理区域，显示记忆卡区域
         document.querySelector('.deck-list').style.display = 'none';
         document.querySelector('.header').style.display = 'none';
+        document.querySelector('.import-button').style.display = 'none';
         document.querySelector('.flashcard-container').style.display = 'block';
 
         nextFlashcard();
@@ -484,8 +530,9 @@ function backToHome() {
     document.querySelector('.export-container').style.display = 'none';
 
     // 显示词单管理区域
+    document.querySelector('.import-button').style.display = 'flex';
     document.querySelector('.deck-list').style.display = 'block';
-    document.querySelector('.header').style.display = 'flex';
+    document.querySelector('.header').style.display = 'block';
 
     // 重置状态
     currentQuestion = null;
@@ -510,35 +557,43 @@ document.addEventListener('DOMContentLoaded', () => {
     // 导入词单
     const fileInput = document.getElementById('deckFile');
     if (fileInput) {
-        fileInput.addEventListener('change', async function () {
-            const file = this.files[0];
-            if (!file) return;
-
-            const formData = new FormData();
-            formData.append('file', file);
-
-            try {
-                const response = await fetch('/import_deck', {
-                    method: 'POST',
-                    body: formData
-                });
-                const data = await response.json();
-
-                if (data.error) {
-                    alert(data.error);
-                    return;
-                }
-
-                alert(`词单导入成功，共导入 ${data.word_count} 个单词`);
-                this.value = ''; // 清空文件选择
-                loadDecks(); // 重新加载词单列表
-            } catch (error) {
-                console.error('导入词单失败:', error);
-                alert('导入词单失败，请重试');
-            }
-        });
+        // 移除可能存在的旧事件监听器
+        fileInput.removeEventListener('change', handleFileUpload);
+        // 添加新的事件监听器
+        fileInput.addEventListener('change', handleFileUpload);
     }
 });
+
+// 处理多文件上传
+async function handleFileUpload(event) {
+    const files = event.target.files;
+    if (!files || files.length === 0) return;
+
+    const formData = new FormData();
+    for (const file of files) {
+        formData.append('files', file);
+    }
+
+    try {
+        const response = await fetch('/import_decks', {
+            method: 'POST',
+            body: formData
+        });
+        const data = await response.json();
+
+        if (data.error) {
+            alert(data.error);
+            return;
+        }
+
+        alert(`成功导入 ${data.success_count} 个词单，共 ${data.total_words} 个单词`);
+        event.target.value = ''; // 清空文件选择
+        loadDecks(); // 重新加载词单列表
+    } catch (error) {
+        console.error('导入词单失败:', error);
+        alert('导入词单失败，请重试');
+    }
+}
 
 // 删除词单
 async function deleteDeck(deckId) {
@@ -601,43 +656,6 @@ document.addEventListener('keypress', function (e) {
     }
 });
 
-// 页面加载时加载词单列表
-document.addEventListener('DOMContentLoaded', () => {
-    loadDecks();
-
-    // 导入词单
-    const fileInput = document.getElementById('deckFile');
-    if (fileInput) {
-        fileInput.addEventListener('change', async function () {
-            const file = this.files[0];
-            if (!file) return;
-
-            const formData = new FormData();
-            formData.append('file', file);
-
-            try {
-                const response = await fetch('/import_deck', {
-                    method: 'POST',
-                    body: formData
-                });
-                const data = await response.json();
-
-                if (data.error) {
-                    alert(data.error);
-                    return;
-                }
-
-                alert(`词单导入成功，共导入 ${data.word_count} 个单词`);
-                this.value = ''; // 清空文件选择
-                loadDecks(); // 重新加载词单列表
-            } catch (error) {
-                console.error('导入词单失败:', error);
-                alert('导入词单失败，请重试');
-            }
-        });
-    }
-});
-
 // 删除词单
 async function deleteDeck(deckId) {
     if (!confirm('确定要删除这个词单吗？')) {
@@ -665,4 +683,14 @@ async function deleteDeck(deckId) {
         console.error('删除词单失败:', error);
         alert('删除词单失败，请重试');
     }
-} 
+}
+// 初始化新单词的SRS信息
+function initializeSRSInfo() {
+    return {
+        nextReview: 0,
+        interval: 0,
+        ease: 2.5,  // 初始难度系数
+        lastReview: 0,
+        reviewCount: 0  // 添加复习次数计数
+    };
+}

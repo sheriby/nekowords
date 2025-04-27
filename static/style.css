@@ -8,6 +8,8 @@
     --correct-bg-color: #e1fce2;
     --incorrect-bg-color: #fce1e1;
     --card-bg: #ffffff;
+    --question-color: #eb3e94;
+    --answer-color: #6d6cf0;
     --card-shadow: 0 10px 20px rgba(0, 0, 0, 0.2);
     --hover-shadow: 0 15px 25px rgba(0, 0, 0, 0.3);
 }
@@ -73,8 +75,14 @@ div.question {
     padding: 50px;
     border-radius: 20px;
     box-shadow: var(--card-shadow);
-    max-height: 90vh;
+    max-height: 60vh;
     overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-width: auto;
+    /* Firefox */
+    scrollbar-color: rgba(74, 144, 226, 0.1) rgba(0, 0, 0, 0.05);
+    /* Firefox */
+    scrollbar-arrow-color: rgba(74, 144, 226, 0.1);
 }
 
 .header {
@@ -336,7 +344,7 @@ input[type="text"]:focus {
     background-color: white;
     padding: 20px;
     border-radius: 10px;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    /* box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1); */
     margin-bottom: 20px;
     position: relative;
     padding-top: 60px;
@@ -375,6 +383,7 @@ input[type="text"]:focus {
 }
 
 .difficulty-buttons {
+    margin-top: 40px;
     display: flex;
     justify-content: space-between;
     gap: 10px;
@@ -384,7 +393,7 @@ input[type="text"]:focus {
     flex: 1;
     padding: 10px;
     border: none;
-    border-radius: 4px;
+    border-radius: 5px;
     cursor: pointer;
     font-size: 16px;
     transition: background-color 0.3s;
@@ -406,7 +415,7 @@ input[type="text"]:focus {
 
 .difficulty-btn.good {
     background-color: #ffc107;
-    color: black;
+    color: white;
 }
 
 .difficulty-btn.easy {
@@ -415,11 +424,11 @@ input[type="text"]:focus {
 }
 
 #flashcard {
-    background-color: #f8f9fa;
+    background-color: var(--secondary-color);
+    color: var(--question-color);
+    font-size: 2em;
     padding: 20px;
-    border-radius: 8px;
     text-align: center;
-    font-size: 24px;
     margin-bottom: 20px;
     cursor: pointer;
     min-height: 100px;
@@ -429,16 +438,18 @@ input[type="text"]:focus {
 }
 
 #flashcard-answer {
-    background-color: #e9ecef;
+    background-color: var(--correct-bg-color);
+    color: var(--answer-color);
     padding: 20px;
     border-radius: 8px;
     text-align: center;
-    font-size: 20px;
+    font-size: 1.4em;
     margin-bottom: 20px;
     min-height: 100px;
     display: flex;
     align-items: center;
     justify-content: center;
+    line-height: 2em;
 }
 
 #question {
@@ -611,25 +622,38 @@ input[type="text"]:focus {
     border-radius: 4px;
     cursor: pointer;
     font-size: 14px;
-    transition: background-color 0.2s;
+    transition: all 0.2s ease;
+    /* 添加过渡效果 */
 }
 
 .deck-actions button:first-child {
     background-color: #4CAF50;
     color: white;
+    box-shadow: 0 2px 4px rgba(76, 175, 80, 0.2);
+    /* 添加阴影 */
 }
 
 .deck-actions button:first-child:hover {
     background-color: #45a049;
+    transform: translateY(-2px);
+    /* 悬停时向上浮动 */
+    box-shadow: 0 4px 8px rgba(76, 175, 80, 0.3);
+    /* 悬停时加深阴影 */
 }
 
 .deck-actions button.delete-btn {
     background-color: #f44336;
     color: white;
+    box-shadow: 0 2px 4px rgba(244, 67, 54, 0.2);
+    /* 添加阴影 */
 }
 
 .deck-actions button.delete-btn:hover {
     background-color: #d32f2f;
+    transform: translateY(-2px);
+    /* 悬停时向上浮动 */
+    box-shadow: 0 4px 8px rgba(244, 67, 54, 0.3);
+    /* 悬停时加深阴影 */
 }
 
 #decks {
