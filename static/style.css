@@ -162,12 +162,14 @@ input[type="text"]:focus {
     border-radius: 5px;
     border-left: 5px solid var(--correct-color);
     background-color: var(--correct-bg-color);
+    animation: correct-flash 0.5s ease;
 }
 
 .history-item.incorrect {
     border-radius: 5px;
     border-left: 5px solid var(--incorrect-color);
     background-color: var(--incorrect-bg-color);
+    animation: wrong-shake 0.5s ease;
 }
 
 .history-question {
@@ -221,4 +223,34 @@ input[type="text"]:focus {
 
 #exportWrongAnswers:hover {
     background-color: #357abd;
+}
+
+@keyframes correct-flash {
+    0% {
+        transform: scale(1);
+    }
+
+    50% {
+        transform: scale(1.01);
+    }
+
+    100% {
+        transform: scale(1);
+    }
+}
+
+@keyframes wrong-shake {
+
+    0%,
+    100% {
+        transform: translateX(0);
+    }
+
+    25% {
+        transform: translateX(-2px);
+    }
+
+    75% {
+        transform: translateX(2px);
+    }
 }

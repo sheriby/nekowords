@@ -26,7 +26,7 @@ function addHistoryItem(question, userAnswer, correctAnswer, isCorrect) {
     historyContainer.innerHTML = ''; // 清空历史记录，只保留最新的一条
 
     const historyItem = document.createElement('div');
-    historyItem.className = `history-item ${isCorrect ? 'correct' : 'incorrect'}`;
+    historyItem.className = `history-item`; // 先不添加correct/incorrect类
 
     // 如果是中文到日语的题目，在正确答案后面添加假名（如果不是全假名单词）
     let displayAnswer = correctAnswer;
@@ -40,12 +40,19 @@ function addHistoryItem(question, userAnswer, correctAnswer, isCorrect) {
             ${isCorrect
             ? `<span>答案: ${displayAnswer}</span>`
             : `<span>你的答案: ${userAnswer}</span>
-                   <span>正确答案: ${displayAnswer}</span>`
+               <span>正确答案: ${displayAnswer}</span>`
         }
         </div>
     `;
 
     historyContainer.appendChild(historyItem);
+
+    // 使用 requestAnimationFrame 确保动画重置
+    requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+            historyItem.classList.add(isCorrect ? 'correct' : 'incorrect');
+        });
+    });
 }
 
 function showWrongAnswers() {
