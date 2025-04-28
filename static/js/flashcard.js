@@ -2,18 +2,17 @@
  * Flashcard mode functionality
  */
 
-import { loadDeckWords, updateSRSData } from './api.js';
-import { updateSRSInfo } from './srs.js';
+import { loadDeckWords, updateFSRSData } from './api.js';
 import { showFlashcardScreen, showHomeScreen } from './ui.js';
 
 // State variables
 let currentQuestion = null;
 let allQuestions = [];
-let srsData = new Map();
 let currentDeckId = null;
 let flashcardState = 'front';
 let currentQuestionIndex = 0;
 let isLoadingQuestions = false;
+let isProcessingDifficulty = false;
 
 /**
  * Start flashcard mode with a specific deck
@@ -26,7 +25,6 @@ export async function startFlashcardMode(deckId) {
     try {
         // 重置状态
         allQuestions = [];
-        srsData.clear();
         isLoadingQuestions = false;
         currentQuestionIndex = 0; // 重置当前题目索引
 
@@ -86,34 +84,14 @@ async function loadQuestions() {
             return;
         }
 
-        // 处理每个题目的SRS数据
+        // 验证每个题目的FSRS信息
         questions.forEach(q => {
-            // 确保SRS信息存在且有效
-            if (!q.srs_info || typeof q.srs_info !== 'object') {
-                console.warn('Invalid SRS info for question:', q.question);
-                q.srs_info = {
-                    srs_record_id: null,
-                    nextReview: 0,
-                    interval: 0,
-                    ease: 2.5,
-                    lastReview: 0
-                };
+            // 确保FSRS信息存在且有效
+            if (!q.fsrs_info || typeof q.fsrs_info !== 'object') {
+                console.warn('Invalid FSRS info for question:', q.question);
+            } else {
+                console.log(`Question: ${q.question}, Next review: ${new Date(q.fsrs_info.next_review).toLocaleString()}, State: ${q.fsrs_info.state}`);
             }
-
-            // 确保nextReview是一个有效的数字
-            if (isNaN(q.srs_info.nextReview)) {
-                console.warn('Invalid nextReview for question:', q.question);
-                q.srs_info.nextReview = 0;
-            }
-
-            // 确保interval是一个有效的数字
-            if (isNaN(q.srs_info.interval)) {
-                console.warn('Invalid interval for question:', q.question);
-                q.srs_info.interval = 0;
-            }
-
-            // 添加到SRS数据映射
-            srsData.set(q.question, q.srs_info);
         });
 
         // 随机打乱题目顺序
@@ -256,7 +234,7 @@ export function flipFlashcard() {
 }
 
 // 用于防止重复处理的标志
-let isProcessingDifficulty = false;
+// isProcessingDifficulty 已在文件顶部声明
 
 /**
  * Handle difficulty rating button click
@@ -276,16 +254,27 @@ export async function handleDifficultyRating(e) {
     try {
         console.log('Processing difficulty rating:', e.target.textContent);
         const difficulty = e.target.textContent;
-        const srsInfo = srsData.get(currentQuestion.question);
 
-        // Update SRS data
-        updateSRSInfo(srsInfo, difficulty);
+        // 确保当前问题有FSRS信息
+        if (!currentQuestion || !currentQuestion.fsrs_info) {
+            console.error('No FSRS info for current question');
+            throw new Error('无法更新FSRS数据：当前问题没有FSRS信息');
+        }
 
-        // Save SRS data to server
+        const recordId = currentQuestion.fsrs_info.record_id;
+
+        // Save FSRS data to server
         try {
-            await updateSRSData(srsInfo.srs_record_id, srsInfo, currentDeckId);
+            const response = await updateFSRSData(recordId, difficulty, currentDeckId);
+            console.log('FSRS data update response:', response);
+
+            if (response.error) {
+                throw new Error(response.error);
+            }
+
             await nextFlashcard(); // 使用await等待nextFlashcard完成
         } catch (error) {
+            console.error('Failed to update FSRS data:', error);
             alert(error.message);
         }
     } finally {
@@ -311,7 +300,6 @@ export function getFlashcardState() {
 export function resetFlashcardState() {
     currentQuestion = null;
     allQuestions = [];
-    srsData.clear();
     currentDeckId = null;
     flashcardState = 'front';
     currentQuestionIndex = 0;

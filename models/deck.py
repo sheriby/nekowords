@@ -61,21 +61,57 @@ def add_deck(name):
     Returns:
         int or None: The ID of the new deck, or None if the deck already exists.
     """
-    conn = get_db_connection()
-    c = conn.cursor()
-    try:
-        c.execute('INSERT INTO decks (name, created_at) VALUES (?, ?)',
-                 (name, int(datetime.now().timestamp())))
-        deck_id = c.lastrowid
-        conn.commit()
+    import time
+    import logging
 
-        # 为新词单创建独立的表
-        create_deck_tables(deck_id)
-        return deck_id
-    except sqlite3.IntegrityError:
-        return None
-    finally:
-        conn.close()
+    max_retries = 5
+    retry_delay = 0.1  # 初始延迟时间（秒）
+
+    for attempt in range(max_retries):
+        conn = None
+        try:
+            conn = get_db_connection()
+            c = conn.cursor()
+
+            # 检查词单是否已存在
+            c.execute('SELECT id FROM decks WHERE name = ?', (name,))
+            existing_deck = c.fetchone()
+            if existing_deck:
+                logging.info(f"Deck with name '{name}' already exists")
+                return existing_deck[0]
+
+            c.execute('INSERT INTO decks (name, created_at) VALUES (?, ?)',
+                     (name, int(datetime.now().timestamp())))
+            deck_id = c.lastrowid
+            conn.commit()
+
+            # 为新词单创建独立的表
+            create_deck_tables(deck_id)
+
+            logging.info(f"Successfully created deck: id={deck_id}, name={name}")
+            return deck_id
+
+        except sqlite3.OperationalError as e:
+            if "database is locked" in str(e) and attempt < max_retries - 1:
+                # 数据库锁定，等待一段时间后重试
+                wait_time = retry_delay * (2 ** attempt)  # 指数退避策略
+                logging.warning(f"Database is locked, retrying in {wait_time:.2f} seconds (attempt {attempt+1}/{max_retries})")
+                time.sleep(wait_time)
+            else:
+                logging.error(f"Error creating deck after {attempt+1} attempts: {str(e)}")
+                return None
+
+        except sqlite3.IntegrityError:
+            logging.warning(f"Deck with name '{name}' already exists (integrity error)")
+            return None
+
+        except Exception as e:
+            logging.error(f"Error creating deck: {str(e)}")
+            return None
+
+        finally:
+            if conn:
+                conn.close()
 
 def delete_deck(deck_id):
     """

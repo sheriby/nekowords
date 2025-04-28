@@ -13,18 +13,28 @@ def get_deck_words_route():
     Returns:
         flask.Response: A JSON response containing word information.
     """
-    deck_id = request.json.get('deck_id')
-    if not deck_id:
-        return jsonify({'error': '缺少词单ID'})
+    import logging
 
-    # 获取批次大小参数
-    limit = request.json.get('limit', 10)
+    try:
+        deck_id = request.json.get('deck_id')
+        if not deck_id:
+            return jsonify({'error': '缺少词单ID'})
 
-    # 获取需要复习的题目
-    questions = get_deck_words(deck_id, limit)
+        # 获取批次大小参数
+        limit = request.json.get('limit', 20)
 
-    # 返回题目
-    return jsonify(questions)
+        logging.info(f"Getting deck words for deck {deck_id} with limit {limit}")
+
+        # 获取需要复习的题目
+        questions = get_deck_words(deck_id, limit)
+
+        logging.info(f"Found {len(questions)} questions for review")
+
+        # 返回题目
+        return jsonify(questions)
+    except Exception as e:
+        logging.error(f"Error getting deck words: {str(e)}")
+        return jsonify({'error': f'获取词单单词时发生错误: {str(e)}'})
 
 @word_bp.route('/export_wrong_answers', methods=['POST'])
 def export_wrong_answers():

@@ -1,4 +1,5 @@
 from db import get_db_connection
+from models.fsrs import initialize_fsrs_record, get_fsrs_records_for_review
 
 def add_words_to_deck(deck_id, words):
     """
@@ -11,120 +12,129 @@ def add_words_to_deck(deck_id, words):
     Returns:
         bool: True if the words were added successfully, False otherwise.
     """
-    conn = get_db_connection()
-    c = conn.cursor()
-    try:
-        for word in words:
-            c.execute(f'''
-                INSERT INTO words_{deck_id} (japanese, kana, chinese, is_kana)
-                VALUES (?, ?, ?, ?)
-            ''', (word['japanese'], word['kana'], word['chinese'], word['is_kana']))
-            word_id = c.lastrowid
+    import time
+    import logging
+    import sqlite3
 
-            # 为每个单词创建SRS记录
-            questions = []
+    # 批量处理的大小
+    BATCH_SIZE = 50
 
-            # 如果中文和日文相同，只存储一次
-            if word['japanese'] == word['chinese']:
-                questions.append((word_id, word['japanese']))  # 只存储一次日文/中文
-            else:
-                questions.append((word_id, word['japanese']))  # 日文题目
-                questions.append((word_id, word['chinese']))   # 中文题目
+    max_retries = 5
+    retry_delay = 0.1  # 初始延迟时间（秒）
 
-            # 如果不是全假名单词，添加假名题目
-            if not word['is_kana']:
-                questions.append((word_id, word['kana']))      # 假名题目
+    for attempt in range(max_retries):
+        conn = None
+        try:
+            conn = get_db_connection()
+            c = conn.cursor()
 
-            # 在SRS表中存储不重复的问题
-            for _, question in questions:
+            # 将单词列表分成多个批次
+            total_words = len(words)
+            processed_count = 0
+            batch_count = 0
+
+            logging.info(f"Processing {total_words} words in batches of {BATCH_SIZE}")
+
+            for i, word in enumerate(words):
+                # 检查单词是否已存在
                 c.execute(f'''
-                    INSERT INTO srs_records_{deck_id} (word_id, question, next_review, interval, ease, last_review)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                ''', (word_id, question, 0, 0, 1.0, 0))
+                    SELECT id FROM words_{deck_id}
+                    WHERE japanese = ? AND kana = ? AND chinese = ?
+                ''', (word['japanese'], word['kana'], word['chinese']))
 
-        conn.commit()
-        return True
-    except Exception as e:
-        print(f"Error adding words: {str(e)}")
-        return False
-    finally:
-        conn.close()
+                existing_word = c.fetchone()
+                if existing_word:
+                    word_id = existing_word[0]
+                    logging.debug(f"Word already exists: {word['japanese']}, using existing ID: {word_id}")
+                else:
+                    # 插入新单词
+                    c.execute(f'''
+                        INSERT INTO words_{deck_id} (japanese, kana, chinese, is_kana)
+                        VALUES (?, ?, ?, ?)
+                    ''', (word['japanese'], word['kana'], word['chinese'], word['is_kana']))
+                    word_id = c.lastrowid
+                    logging.debug(f"Added new word: {word['japanese']}, ID: {word_id}")
 
-def get_deck_words(deck_id, limit=10, current_time=None):
+                # 为每个单词创建FSRS记录
+                questions = []
+
+                # 如果中文和日文相同，只存储一次
+                if word['japanese'] == word['chinese']:
+                    questions.append(word['japanese'])  # 只存储一次日文/中文
+                else:
+                    questions.append(word['japanese'])  # 日文题目
+                    questions.append(word['chinese'])   # 中文题目
+
+                # 如果不是全假名单词，添加假名题目
+                if not word['is_kana']:
+                    questions.append(word['kana'])      # 假名题目
+
+                # 在FSRS表中存储不重复的问题
+                for question in questions:
+                    record_id = initialize_fsrs_record(word_id, question, deck_id, conn)
+                    if not record_id:
+                        logging.warning(f"Failed to initialize FSRS record for word {word_id}, question: {question}")
+
+                processed_count += 1
+
+                # 每处理一批数据就提交一次事务
+                if (i + 1) % BATCH_SIZE == 0 or i == total_words - 1:
+                    conn.commit()
+                    batch_count += 1
+                    logging.info(f"Committed batch {batch_count}, processed {processed_count}/{total_words} words")
+
+                    # 短暂暂停，让其他连接有机会访问数据库
+                    time.sleep(0.01)
+
+            logging.info(f"Successfully added {processed_count} words to deck {deck_id} in {batch_count} batches")
+            return True
+
+        except sqlite3.OperationalError as e:
+            if "database is locked" in str(e) and attempt < max_retries - 1:
+                # 数据库锁定，等待一段时间后重试
+                wait_time = retry_delay * (2 ** attempt)  # 指数退避策略
+                logging.warning(f"Database is locked, retrying in {wait_time:.2f} seconds (attempt {attempt+1}/{max_retries})")
+                time.sleep(wait_time)
+            else:
+                logging.error(f"Error adding words after {attempt+1} attempts: {str(e)}")
+                return False
+
+        except Exception as e:
+            logging.error(f"Error adding words: {str(e)}")
+            return False
+
+        finally:
+            if conn:
+                conn.close()
+
+def get_deck_words(deck_id, limit=20):
     """
-    Get words and SRS data for a deck that need to be reviewed.
+    Get words and FSRS data for a deck that need to be reviewed.
 
     Args:
         deck_id (int): The ID of the deck.
-        limit (int, optional): Maximum number of questions to return. Defaults to 10.
-        current_time (int, optional): Current time in milliseconds. If None, uses current time.
+        limit (int, optional): Maximum number of questions to return. Defaults to 20.
 
     Returns:
-        list: A list of dictionaries containing word and SRS information.
+        list: A list of dictionaries containing word and FSRS information.
     """
-    from datetime import datetime
-
-    conn = get_db_connection()
-    c = conn.cursor()
-
-    # 如果没有提供当前时间，使用当前时间
-    if current_time is None:
-        current_time = int(datetime.now().timestamp() * 1000)
-
-    # 获取需要复习的SRS记录
-    c.execute(f'''
-        SELECT sr.id, sr.word_id, sr.question, sr.next_review, sr.interval, sr.ease, sr.last_review
-        FROM srs_records_{deck_id} sr
-        WHERE sr.next_review <= ?
-        ORDER BY sr.next_review ASC
-        LIMIT ?
-    ''', (current_time, limit))
-    srs_records = c.fetchall()
+    # 使用FSRS获取需要复习的记录
+    fsrs_records = get_fsrs_records_for_review(deck_id, limit)
 
     # 如果没有需要复习的记录，返回空列表
-    if not srs_records:
-        conn.close()
+    if not fsrs_records:
         return []
-
-    # 获取相关单词的ID
-    word_ids = set(record[1] for record in srs_records)
-
-    # 获取单词信息
-    word_data = {}
-    for word_id in word_ids:
-        c.execute(f'''
-            SELECT id, japanese, kana, chinese, is_kana
-            FROM words_{deck_id}
-            WHERE id = ?
-        ''', (word_id,))
-        word = c.fetchone()
-        if word:
-            word_data[word[0]] = {
-                'id': word[0],
-                'japanese': word[1],
-                'kana': word[2],
-                'chinese': word[3],
-                'is_kana': word[4]
-            }
 
     # 组织数据
     questions = []
-    for record in srs_records:
-        srs_id, word_id, question, next_review, interval, ease, last_review = record
-
-        # 如果找不到对应的单词，跳过
-        if word_id not in word_data:
-            continue
-
-        word = word_data[word_id]
-
+    for record in fsrs_records:
         # 根据问题类型确定题目类型
         question_type = None
-        if question == word['japanese']:
+        if record['question'] == record['japanese']:
             question_type = 'japanese_to_others'
-        elif question == word['kana'] and not word['is_kana']:
+        elif record['question'] == record['kana'] and not record['is_kana']:
             question_type = 'kana_to_others'
-        elif question == word['chinese'] and word['japanese'] != word['chinese']:
+        elif record['question'] == record['chinese'] and record['japanese'] != record['chinese']:
             question_type = 'chinese_to_others'
         else:
             # 如果无法确定题目类型，跳过
@@ -132,21 +142,25 @@ def get_deck_words(deck_id, limit=10, current_time=None):
 
         # 添加题目
         questions.append({
-            'question': question,
-            'answer': question,
+            'question': record['question'],
+            'answer': record['question'],
             'type': question_type,
-            'japanese': word['japanese'],
-            'kana': word['kana'],
-            'chinese': word['chinese'],
-            'is_kana': word['is_kana'],
-            'srs_info': {
-                'srs_record_id': srs_id,
-                'nextReview': next_review,
-                'interval': interval,
-                'ease': ease,
-                'lastReview': last_review
+            'japanese': record['japanese'],
+            'kana': record['kana'],
+            'chinese': record['chinese'],
+            'is_kana': record['is_kana'],
+            'fsrs_info': {
+                'record_id': record['id'],
+                'state': record['state'],
+                'difficulty': record['difficulty'],
+                'stability': record['stability'],
+                'retrievability': record['retrievability'],
+                'reps': record['reps'],
+                'lapses': record['lapses'],
+                'scheduled_days': record['scheduled_days'],
+                'next_review': record['next_review'],
+                'last_review': record['last_review']
             }
         })
 
-    conn.close()
     return questions

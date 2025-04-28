@@ -50,30 +50,36 @@ export async function loadDeckWords(deckId, limit = 10) {
 }
 
 /**
- * Update SRS data on the server
+ * Update FSRS data on the server
  *
- * @param {number} srsRecordId - SRS record ID
- * @param {Object} srsInfo - SRS information object
+ * @param {number} recordId - FSRS record ID
+ * @param {string} difficulty - Difficulty level ('重来', '困难', '良好', or '简单')
  * @param {number} deckId - Deck ID
  * @returns {Promise<Object>} - Promise resolving to a response object
  */
-export async function updateSRSData(srsRecordId, srsInfo, deckId) {
+export async function updateFSRSData(recordId, difficulty, deckId) {
     try {
-        const response = await fetch('/update_srs', {
+        console.log(`Updating FSRS data: record_id=${recordId}, difficulty=${difficulty}, deck_id=${deckId}`);
+
+        const response = await fetch('/update_fsrs', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
             },
             body: JSON.stringify({
-                srs_record_id: srsRecordId,
-                srs_info: srsInfo,
+                record_id: recordId,
+                difficulty: difficulty,
                 deck_id: deckId
             })
         });
-        return await response.json();
+
+        const result = await response.json();
+        console.log('FSRS update response:', result);
+
+        return result;
     } catch (error) {
-        console.error('更新SRS数据失败:', error);
-        throw new Error('更新SRS数据失败，请重试');
+        console.error('更新FSRS数据失败:', error);
+        throw new Error('更新FSRS数据失败，请重试');
     }
 }
 
